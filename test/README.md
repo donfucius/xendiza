@@ -1,6 +1,6 @@
 # xendiza Test Suite
 
-This directory contains comprehensive unit tests for the xendiza x86-64 disassembler library.
+This directory contains comprehensive unit tests for the xendiza x86/x86-64 disassembler library. Tests are organized into x64-only suites (using `X64Traits::Disasm` directly) and x86-32 suites (using the public `xendiza::Disasm<32>` entry point).
 
 ## Test Organization
 
@@ -147,6 +147,69 @@ Test count evolves with coverage expansion; use `ctest -N` in your build directo
 
 ---
 
+### `test_x86_basic.cpp`
+32-bit (`xendiza::Disasm<32>`) smoke tests for the 1-byte map: NOP, a few `ADD`/`MOV` ModR/M forms, the `0x66` operand-size override, the `0x64` (FS) segment override on `MOV moffs32`, the 32-bit-only single-byte `INC`/`DEC` short forms (0x40-0x4F), and the empty-buffer error path.
+
+---
+
+### `test_x86_2byte_opcodes.cpp`
+32-bit tests for the `0F` two-byte map, mirroring the x64 2-byte suite but asserting 32-bit-only semantics (no REX.W, no CMPXCHG16B, `BSWAP` always `r32`, `0F D6` invalid, etc.). Covers MOVZX/MOVSX, SETcc, multibyte NOP, SHLD/SHRD, Group 6/7/15/16, MOV creg, CMPXCHG8B/RDRAND, `0F BA`, MOVNTI, the minimal SSE/PS family, and the composite segment-prefix + memory forms.
+
+---
+
+### `test_x86_opcode_extensions.cpp`
+32-bit tests for the 1-byte opcode-extension groups dispatched via `case 0xEE` (Groups 1-6: `0x80/81/82/83`, `0xC0/C1`, `0xD0-D3`, `0xC6/C7`, `0xF6/F7`, `0xFE/FF`), plus `0x8F` POP and the `0x69/0x6B` IMUL three-operand forms.
+
+**Coverage:**
+- Each group: `mod=11` register form + `mod=00` memory form, plus `0x66` shrink (r32→r16, imm32→imm16; 8-bit forms unaffected by `0x66`)
+- `0x82` always-UNDEFINED error path
+- Invalid reg-field sub-instructions (e.g. `0xFE /2`, `0xFF /3,/5,/7`, `0x8F /1-/7`, `0xC6/C7 /1-/7`)
+- SIB base=5 disp32 length correction (`case 0xEE` +4 path)
+- Segment-prefix composite memory operands (`cs_m8`, `fs_m32`) combined with extension groups
+- `0xFF /2,/4,/6` register form (`r32`) and memory form (`m32`, downgraded from the shared `m64`)
+
+---
+
+### `test_x86_x87_opcodes.cpp`
+32-bit tests for the x87 core one-byte family (`D8`-`DF`) dispatched via `case 0x87`, mirroring the x64 x87 suite via the public `Disasm<32>` API.
+
+**Coverage:**
+- Memory forms across D8-DF (`m32fp`/`m64fp`/`m80fp`/`m16`/`m32`/`m64`/`m`)
+- Register-stack forms (`st0`,`sti`) including operand-order reversal for DC vs D8
+- Fixed-ModR/M specials (`FNOP`, `FCHS`, `FLD1`, `FSQRT`, `FNCLEX`, `FNINIT`, `FCOMPP`, `FUCOMPP`, `FNSTSW ax`, …)
+- `FWAIT` (`0x9B`) standalone
+- Reserved/invalid encodings → `UNDEFINED_INSTRUCTION`
+- SIB base=5 disp32 length correction for x87 memory forms, including the truncated-buffer `INSUFFICIENT_BUFFER` path
+
+---
+
+### `test_x86_prefixes.cpp`
+32-bit tests for `ProcessPrefix`, the no-operand single-byte instructions (`case 0x01` direct dispatch), and the 32-bit-only `INC`/`DEC` short forms.
+
+**Coverage:**
+- **0x40-0x4F = INC/DEC r32** (the single biggest 32-vs-64 divergence; in x64 these are REX prefixes). All 16 forms + `0x66` shrink to `r16`.
+- PUSH/POP r32 (`0x50-0x5F`), normalized from `r64`
+- No-operand instructions: `NOP`, `RET`, `CLC/STC/CLI/STI/CLD/STD/CMC/HLT`, `CWDE/CDQ`, `PUSHFQ/POPFQ`, `SAHF/LAHF`, `XLAT`, `INT3`, `IRETD` (32-bit form), `LEAVE`, `RETF`
+- Legacy opcodes the shared table marks invalid in 32-bit mode (asserting current behavior): `PUSHA/POPA`, `PUSH/POP ES`, `PUSH CS`, BCD-adjusts (`DAA/DAS/AAA/AAS`), `CALL far`, `JMP far`, `INTO`, `LES/LDS` (decode as length-1 INVALID)
+- Duplicate-prefix detection → `UNDEFINED_INSTRUCTION`: duplicate `LOCK`, `REP/REPNE`, `0x66`, `0x67`
+- Valid prefix combinations; segment prefixes are last-wins (no dedup)
+- **Segment-override composite memory operands across all 6 segments (ES/CS/SS/DS/FS/GS) × multiple widths** (`es_m8` … `gs_m64`), plus `moffs` composite forms (`fs_moffs32`, `gs_moffs8`, `cs_moffs32`), and the non-composited fall-through for `m32fp`/`m`/`m128`
+- `0x67` address-size override: `moffs32 → moffs16` (length = prefix + 3)
+- `0x66` operand-size override on `moffs` MOV and `PUSH imm32`
+- All 16 `Jcc rel8` short forms
+
+---
+
+## Fixed Decoder Bugs
+
+The 32-bit test suite surfaced the following decoder inconsistencies in `xendiza_x86.cpp`. All three have been fixed; the tests now assert the correct behavior and guard against regression:
+
+1. **`FF /2`,`/4`,`/6` and `8F /0` memory forms emitted `m64` instead of `m32`.** The shared helpers rewrite these to the long-mode-default `m64`. `NormalizeOperandSize32` downgrades the register form (`r64→r32`) but intentionally leaves fixed-width `m64` operands (e.g. `CMPXCHG8B`, `FILD`) alone, so the fix rewrites `m64→m32` in the `0xEE` handler scoped to opcodes `0xFF`/`0x8F`. (Tests: `Grp6_0xFF_CALL/PUSH_mem_form_m32`, `POP_0x8F_slash0_mem_form_m32`.)
+2. **`case 0xEE` (extension groups with immediates) did not verify the trailing immediate bytes were within the buffer** before returning success. Both `DecodeModrmWithImmediate` and the `0xEE` handler now validate the full encoding length against `buffer.size()` and return `INSUFFICIENT_BUFFER` for a truncated immediate. (Test: `BufferTooShort_missing_imm`.)
+3. **`case 0x87` (x87) did not verify the `disp32` for SIB base=5 was within the buffer** before returning success. The handler now checks the full length (including the mandatory disp32) before reporting success. (Test: `BufferTooShort_SIB_disp32`.)
+
+---
+
 ## Test Statistics
 
 - Current totals and pass/fail status are build-dependent snapshots; run `ctest --output-on-failure` for the latest result.
@@ -180,6 +243,9 @@ ctest -R "PublicApiTest"     # Public C++/C API tests
 ctest -R "TwoByteOpcodeTest" # 0x0F two-byte subset
 ctest -R "NoOperandTest"     # No-operand instruction semantics
 ctest -R "X87OpcodeTest"     # x87 D8-DF core matrix
+ctest -R "X86OpcodeExtTest"  # 32-bit 1-byte opcode-extension groups
+ctest -R "X86x87Test"        # 32-bit x87 D8-DF
+ctest -R "X86IncDecTest|X86NoOperandTest|X86InvalidTest|X86PrefixTest|X86SegOverrideTest|X86AddrSizeTest|X86OperandSizeTest|X86JccTest"  # 32-bit prefixes/no-operand/INC-DEC
 ```
 
 ### Run with verbose output:
@@ -229,29 +295,31 @@ Creates an instruction identifier from opcode and operand type for testing.
 ## Coverage Analysis
 
 ### Implemented & Tested
-- ✅ All basic arithmetic/logic operations
-- ✅ All MOV variants
-- ✅ Stack operations (PUSH/POP)
-- ✅ Conditional jumps (Jcc)
-- ✅ String operations
-- ✅ I/O instructions
-- ✅ All opcode extensions (Groups 1-6)
-- ✅ IMUL three-operand forms
-- ✅ System/flag instructions
-- ✅ No-operand instruction semantics (`operand_count == 0`)
-- ✅ REX.W and 0x66 prefix handling
-- ✅ 0x0F two-byte subset (`Jcc rel32`, `CMOVcc`, `IMUL r,r/m`, `BSF`, `BSR`, `CMPXCHG`, `XADD`, `BT/BTS/BTR/BTC` including `0F BA /4-/7 imm8`, `SETcc`, `BSWAP`, `NOP 0F 1F /0`, direct system/control opcodes including `LFENCE`/`MFENCE`/`SFENCE`/`CLFLUSH`, `SHLD`, `SHRD`)
-- ✅ P2.4 minimal SIMD path (`MOVUPS` `0F 10/11`, `MOVAPS` `0F 28/29`, `UCOMISS/COMISS` `0F 2E/2F`, and `66`-prefixed `UCOMISD/COMISD`)
-- ✅ x87 core D8-DF path with abstract operand forms (including env/control forms `FLDENV`/`FNSTENV`/`FSAVE`/`FRSTOR`, BCD forms `FBLD`/`FBSTP`, and `FWAIT` vs `FN*` distinction checks)
+- ✅ All basic arithmetic/logic operations (x64) + 1-byte opcode-extension Groups 1-6 in 32-bit mode (`test_x86_opcode_extensions.cpp`)
+- ✅ All MOV variants (x64)
+- ✅ Stack operations (PUSH/POP) (x64), plus 32-bit `PUSH/POP r32` normalization
+- ✅ Conditional jumps (Jcc) (x64), plus 32-bit `Jcc rel8` all-conditions loop
+- ✅ String operations (x64)
+- ✅ I/O instructions (x64)
+- ✅ All opcode extensions (Groups 1-6) (x64)
+- ✅ IMUL three-operand forms (x64), plus 32-bit `0x69/0x6B`
+- ✅ System/flag instructions (x64), plus 32-bit no-operand flag instructions
+- ✅ No-operand instruction semantics (`operand_count == 0`) (x64 + 32-bit)
+- ✅ REX.W and 0x66 prefix handling (x64), plus `0x66` shrink in 32-bit
+- ✅ 0x0F two-byte subset (x64), plus the 32-bit `0F`-subset mirror (`test_x86_2byte_opcodes.cpp`)
+- ✅ P2.4 minimal SIMD path (x64 + 32-bit)
+- ✅ x87 core D8-DF path with abstract operand forms (x64 + 32-bit)
+- ✅ **32-bit-only `INC`/`DEC` short forms (0x40-0x4F)** — the key 32-vs-64 divergence
+- ✅ **Address size prefix (0x67)** — 32-bit `moffs32→moffs16`
+- ✅ **Segment override prefixes (ES/CS/SS/DS/FS/GS) × all widths**, including composite memory operands (`fs_m32`, `gs_moffs8`, …) and the non-composited fall-through for `m32fp`/`m`/`m128`
+- ✅ **LOCK prefix** presence/length (32-bit) and duplicate-prefix detection (`LOCK`/`REP`/`66`/`67`)
+- ✅ Legacy invalid-in-32-bit opcodes (`PUSHA`, `CALL/JMP far`, `LES/LDS`, BCD-adjusts) asserted at current behavior
 
 ### Not Yet Tested
-- ❌ Remaining 2-byte opcodes (0x0F prefix)
-- ❌ Broader x87 coverage beyond current D8-DF core matrix
+- ❌ Remaining 2-byte opcodes (0x0F prefix) beyond the current subset
+- ❌ Broader x87 coverage beyond the current D8-DF core matrix
 - ❌ Broader SSE/AVX and VEX/EVEX instruction families beyond the P2.4 minimal SIMD subset
-- ❌ REX.R and REX.X combinations
-- ❌ Address size prefix (0x67)
-- ❌ Segment override prefixes
-- ❌ LOCK prefix
+- ❌ REX.R and REX.X combinations (x64)
 
 ---
 
@@ -261,17 +329,11 @@ Creates an instruction identifier from opcode and operand type for testing.
    - Additional integer instructions beyond current subset
    - Incremental SSE/SSE2 coverage beyond current minimal SIMD set
 
-2. **Add REX prefix combination tests**
+2. **Add REX prefix combination tests** (x64)
    - Additional REX.R and REX.X variations
    - Concrete register extensions (`R8-R15`) are currently out of scope
 
-3. **Add address size prefix tests** (0x67)
-
-4. **Add segment override tests** (CS, DS, ES, FS, GS, SS)
-
-5. **Add LOCK prefix tests** (for atomic operations)
-
-6. **Expand benchmark corpus coverage**
+3. **Expand benchmark corpus coverage**
 
 ---
 

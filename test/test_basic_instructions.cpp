@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <gsl/span>
 
-#include "../xendiza_x64.hpp"
+#include <xendiza/xendiza_x64.hpp>
 
 using namespace xendiza;
 using namespace xendiza::detail;
@@ -266,13 +266,12 @@ TEST(DisasmTest, REX_B_PUSH_POP_boundaries_length_consistent)
 
 TEST(DisasmTest, MOV_GS_R64_M64_segment_operand)
 {
-    // 65 48 8B 04 25 60 00 00 00 -> mov rax, gs:[0x60] (abstract: r64, gs, m64)
+    // 65 48 8B 04 25 60 00 00 00 -> mov rax, gs:[0x60] (abstract: r64, gs_m64)
     auto result = Disasm(std::array<uint8_t, 9>{0x65, 0x48, 0x8B, 0x04, 0x25, 0x60, 0x00, 0x00, 0x00});
     EXPECT_EQ(result.instrId.opcode, OpcodeId::MOV);
-    EXPECT_EQ(result.instrId.operand_count, 3);
+    EXPECT_EQ(result.instrId.operand_count, 2);
     EXPECT_EQ(result.instrId.operands.operand[0], Operand::r64);
-    EXPECT_EQ(result.instrId.operands.operand[1], Operand::gs);
-    EXPECT_EQ(result.instrId.operands.operand[2], Operand::m64);
+    EXPECT_EQ(result.instrId.operands.operand[1], Operand::gs_m64);
     EXPECT_EQ(result.length, 9);
 }
 
@@ -727,7 +726,7 @@ TEST(DisasmTest, MOV_0xB0_al_imm8)
 {
     auto result = Disasm(std::array<uint8_t, 2>{0xB0, 0x42});
     EXPECT_EQ(result.instrId.opcode, OpcodeId::MOV);
-    EXPECT_EQ(result.instrId.operands.operand[0], Operand::al);
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::r8);
     EXPECT_EQ(result.instrId.operands.operand[1], Operand::imm8);
     EXPECT_EQ(result.length, 2);
 }

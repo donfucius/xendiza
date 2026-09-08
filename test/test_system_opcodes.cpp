@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <gsl/span>
 
-#include "../xendiza_x64.hpp"
+#include <xendiza/xendiza_x64.hpp>
 
 using namespace xendiza;
 using namespace xendiza::detail;

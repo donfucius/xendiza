@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <gsl/span>
 
-#include "../xendiza.hpp"
+#include <xendiza/xendiza.hpp>
 
 using namespace xendiza;
 

@@ -6,10 +6,21 @@ set(CMAKE_CXX_STANDARD 20)
 option(XENDIZA_BENCH_WITH_CAPSTONE "Build benchmark with Capstone comparison" OFF)
 option(XENDIZA_BENCH_WITH_ZYDIS "Build benchmark with Zydis comparison" OFF)
 
-add_library(xendiza STATIC xendiza.cpp xendiza_x64.cpp xendiza_x86.cpp)
+add_library(xendiza STATIC
+    src/xendiza.cpp
+    src/xendiza_x64.cpp
+    src/xendiza_x86.cpp
+)
 
+target_include_directories(xendiza
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+
+# gsl::span appears in the public headers, so consumers inherit the dependency.
 find_package(Microsoft.GSL CONFIG REQUIRED)
-target_link_libraries(xendiza PRIVATE Microsoft.GSL::GSL)
+target_link_libraries(xendiza PUBLIC Microsoft.GSL::GSL)
 
 if(MSVC)
     target_compile_options(xendiza PRIVATE /Zc:preprocessor)
@@ -30,10 +41,12 @@ add_executable(xendiza_tests
     test/test_public_api.cpp
     test/test_no_operands.cpp
     test/test_system_opcodes.cpp
+    test/test_x86_opcode_extensions.cpp
+    test/test_x86_x87_opcodes.cpp
+    test/test_x86_prefixes.cpp
 )
 
-target_link_libraries(xendiza_tests PRIVATE xendiza GTest::gtest GTest::gtest_main Microsoft.GSL::GSL)
-target_include_directories(xendiza_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(xendiza_tests PRIVATE xendiza GTest::gtest GTest::gtest_main)
 
 if(MSVC)
     target_compile_options(xendiza_tests PRIVATE /Zc:preprocessor)
@@ -47,8 +60,7 @@ add_executable(xendiza_example
     example/example.cpp
 )
 
-target_link_libraries(xendiza_example PRIVATE xendiza Microsoft.GSL::GSL)
-target_include_directories(xendiza_example PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(xendiza_example PRIVATE xendiza)
 
 if(MSVC)
     target_compile_options(xendiza_example PRIVATE /Zc:preprocessor)
@@ -59,8 +71,7 @@ add_executable(xendiza_bench
     bench/bench_disasm.cpp
 )
 
-target_link_libraries(xendiza_bench PRIVATE xendiza Microsoft.GSL::GSL)
-target_include_directories(xendiza_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(xendiza_bench PRIVATE xendiza)
 
 if(MSVC)
     target_compile_options(xendiza_bench PRIVATE /Zc:preprocessor)
@@ -83,7 +94,29 @@ if(XENDIZA_BENCH_WITH_ZYDIS)
     if(TARGET Zydis::Zydis)
         target_compile_definitions(xendiza_bench PRIVATE XENDIZA_BENCH_WITH_ZYDIS=1)
         target_link_libraries(xendiza_bench PRIVATE Zydis::Zydis)
+        # Zydis' installed cmake target exports /WX /W4 as INTERFACE_COMPILE_OPTIONS,
+        # which would force treat-warnings-as-error on the benchmark (and fail the
+        # build on benign unused-parameter warnings in xendiza's own headers).
+        # Strip those propagated flags so the benchmark uses our own warning policy.
+        get_target_property(_zydis_iface_opts Zydis::Zydis INTERFACE_COMPILE_OPTIONS)
+        if(_zydis_iface_opts)
+            list(REMOVE_ITEM _zydis_iface_opts "/WX" "/W4" "/wd4201")
+            set_target_properties(Zydis::Zydis PROPERTIES INTERFACE_COMPILE_OPTIONS "${_zydis_iface_opts}")
+        endif()
     else()
         message(WARNING "Zydis requested but not found; benchmark will build without Zydis")
     endif()
 endif()
+
+# Install
+include(GNUInstallDirs)
+install(TARGETS xendiza
+    EXPORT xendizaTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(EXPORT xendizaTargets
+    FILE xendizaTargets.cmake
+    NAMESPACE xendiza::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/xendiza
+)

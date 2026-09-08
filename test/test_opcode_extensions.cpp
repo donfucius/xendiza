@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <gsl/span>
 
-#include "../xendiza_x64.hpp"
+#include <xendiza/xendiza_x64.hpp>
 
 using namespace xendiza;
 using namespace xendiza::detail;
@@ -503,6 +503,44 @@ TEST(OpcodeExtTest, CALL_0xFF_m64_mem_SIB_base5_disp32)
     EXPECT_EQ(result.length, 7);
 }
 
+TEST(OpcodeExtTest, CALL_0xFF_mem_SIB_base4_rsp_is_stack_m64)
+{
+    // 0xFF 0x14 0x24 -> CALL [rsp]. SIB base=100 (RSP) selects the stack form;
+    // the shared 0xFF helper forces m64, so the decode site must recover
+    // stack_m64 like every other RSP-base memory operand.
+    auto result = Disasm(std::array<uint8_t, 3>{0xFF, 0x14, 0x24});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::CALL);
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::stack_m64);
+    EXPECT_EQ(result.length, 3);
+}
+
+TEST(OpcodeExtTest, JMP_0xFF_mem_SIB_base4_rsp_is_stack_m64)
+{
+    // 0xFF 0x24 0x24 -> JMP [rsp] (/4). RSP base => stack_m64.
+    auto result = Disasm(std::array<uint8_t, 3>{0xFF, 0x24, 0x24});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::JMP);
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::stack_m64);
+    EXPECT_EQ(result.length, 3);
+}
+
+TEST(OpcodeExtTest, PUSH_0xFF_mem_SIB_base4_rsp_is_stack_m64)
+{
+    // 0xFF 0x34 0x24 -> PUSH [rsp] (/6). RSP base => stack_m64.
+    auto result = Disasm(std::array<uint8_t, 3>{0xFF, 0x34, 0x24});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::PUSH);
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::stack_m64);
+    EXPECT_EQ(result.length, 3);
+}
+
+TEST(OpcodeExtTest, POP_0x8F_mem_SIB_base4_rsp_is_stack_m64)
+{
+    // 0x8F 0x04 0x24 -> POP [rsp] (/0). RSP base => stack_m64.
+    auto result = Disasm(std::array<uint8_t, 3>{0x8F, 0x04, 0x24});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::POP);
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::stack_m64);
+    EXPECT_EQ(result.length, 3);
+}
+
 TEST(OpcodeExtTest, CALL_0xFF_REX_B_stays_abstract_and_length_consistent)
 {
     // REX.B should be consumed but not force concrete register-id output in P2.
@@ -852,4 +890,94 @@ TEST(OpcodeExtTest, REX_W_0xFF_INC_r64)
     EXPECT_EQ(result.instrId.opcode, OpcodeId::INC);
     EXPECT_EQ(result.instrId.operands.operand[0], Operand::r64);
     EXPECT_EQ(result.length, 3);
+}
+
+// =============================================================================
+// Stack memory operands (effective-address base = RSP/ESP via SIB.base=100)
+// =============================================================================
+
+TEST(StackOperandTest, MOV_C6_stack_m8_imm8)
+{
+    // c6 84 24 8b 00 00 00 64 : mov byte [rsp+0x8b], 0x64
+    auto result = Disasm(std::array<uint8_t, 8>{0xC6, 0x84, 0x24, 0x8B, 0x00, 0x00, 0x00, 0x64});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::MOV);
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::stack_m8);
+    EXPECT_EQ(result.instrId.operands.operand[1], Operand::imm8);
+    EXPECT_EQ(result.length, 8);
+}
+
+TEST(StackOperandTest, MOV_C7_stack_m32_imm32)
+{
+    // c7 04 24 11 22 33 44 : mov dword [rsp], 0x44332211
+    auto result = Disasm(std::array<uint8_t, 7>{0xC7, 0x04, 0x24, 0x11, 0x22, 0x33, 0x44});
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::stack_m32);
+    EXPECT_EQ(result.instrId.operands.operand[1], Operand::imm32);
+    EXPECT_EQ(result.length, 7);
+}
+
+TEST(StackOperandTest, MOV_C7_66_stack_m16)
+{
+    // 66 c7 04 24 11 22 : mov word [rsp], 0x2211
+    auto result = Disasm(std::array<uint8_t, 6>{0x66, 0xC7, 0x04, 0x24, 0x11, 0x22});
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::stack_m16);
+    EXPECT_EQ(result.instrId.operands.operand[1], Operand::imm16);
+}
+
+TEST(StackOperandTest, MOV_C7_REXW_stack_m64)
+{
+    // 48 c7 04 24 11 22 33 44 : mov qword [rsp], 0x44332211
+    auto result = Disasm(std::array<uint8_t, 8>{0x48, 0xC7, 0x04, 0x24, 0x11, 0x22, 0x33, 0x44});
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::stack_m64);
+}
+
+TEST(StackOperandTest, ADD_Eb_Gb_stack_m8)
+{
+    // 00 04 24 : add byte [rsp], al
+    auto result = Disasm(std::array<uint8_t, 3>{0x00, 0x04, 0x24});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::ADD);
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::stack_m8);
+}
+
+TEST(StackOperandTest, MOV_Gv_Ev_stack_source_operand1)
+{
+    // 8b 04 24 : mov eax, dword [rsp]  (memory is the source operand)
+    auto result = Disasm(std::array<uint8_t, 3>{0x8B, 0x04, 0x24});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::MOV);
+    EXPECT_EQ(result.instrId.operands.operand[1], Operand::stack_m32);
+}
+
+TEST(StackOperandTest, Group1_80_stack_m8)
+{
+    // 80 04 24 05 : add byte [rsp], 5
+    auto result = Disasm(std::array<uint8_t, 4>{0x80, 0x04, 0x24, 0x05});
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::stack_m8);
+}
+
+TEST(StackOperandTest, MOVZX_0FB6_stack_m8)
+{
+    // 0f b6 04 24 : movzx r32, byte [rsp]
+    auto result = Disasm(std::array<uint8_t, 4>{0x0F, 0xB6, 0x04, 0x24});
+    EXPECT_EQ(result.instrId.operands.operand[1], Operand::stack_m8);
+}
+
+TEST(StackOperandTest, NonStack_no_sib_stays_m8)
+{
+    // c6 00 64 : mov byte [rax], 0x64  (no SIB → not a stack access)
+    auto result = Disasm(std::array<uint8_t, 3>{0xC6, 0x00, 0x64});
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::m8);
+}
+
+TEST(StackOperandTest, NonStack_sib_base5_disp32_stays_m8)
+{
+    // c6 04 25 00 00 00 00 64 : mov byte [disp32], 0x64  (SIB base=101, no base reg)
+    auto result = Disasm(std::array<uint8_t, 8>{0xC6, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00, 0x64});
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::m8);
+    EXPECT_EQ(result.length, 8);
+}
+
+TEST(StackOperandTest, NonStack_register_form_unaffected)
+{
+    // c6 c0 64 : mov al, 0x64  (mod=11 register form)
+    auto result = Disasm(std::array<uint8_t, 3>{0xC6, 0xC0, 0x64});
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::r8);
 }

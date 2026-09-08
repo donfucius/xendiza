@@ -5,8 +5,8 @@
 #include <cstdint>
 #include <gsl/span>
 
-#include "../xendiza_c.h"
-#include "../xendiza.hpp"
+#include <xendiza/xendiza_c.h>
+#include <xendiza/xendiza.hpp>
 
 TEST(PublicApiTest, Disasm64_Uint8Span)
 {

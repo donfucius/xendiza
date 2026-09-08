@@ -1,4 +1,4 @@
-#include "../xendiza.hpp"
+#include <xendiza/xendiza.hpp>
 
 #include <filesystem>
 #include <fstream>
@@ -84,37 +84,40 @@ auto ParseEnumNames(
         if (line.empty()) {
             continue;
         }
-        if (!line.empty() && line.back() == ',') {
-            line.pop_back();
-            line = Trim(line);
-        }
-        if (line.empty()) {
-            continue;
-        }
 
-        std::string name;
-        auto eq = line.find('=');
-        if (eq != std::string::npos) {
-            name = Trim(line.substr(0, eq));
-            const auto value_text = Trim(line.substr(eq + 1));
-            try {
-                current = static_cast<uint32_t>(std::stoul(value_text, nullptr, 0));
-                has_current = true;
-            } catch (...) {
+        // Split by comma to handle multiple enum entries on one line.
+        std::istringstream tokens(line);
+        std::string token;
+        while (std::getline(tokens, token, ',')) {
+            token = Trim(token);
+            if (token.empty()) {
                 continue;
             }
-        } else {
-            name = line;
-            if (!has_current) {
-                current = 0;
-                has_current = true;
-            } else {
-                ++current;
-            }
-        }
 
-        if (current <= 0xFFFFu) {
-            result[static_cast<uint16_t>(current)] = lowercase_names ? ToLower(name) : name;
+            std::string name;
+            auto eq = token.find('=');
+            if (eq != std::string::npos) {
+                name = Trim(token.substr(0, eq));
+                const auto value_text = Trim(token.substr(eq + 1));
+                try {
+                    current = static_cast<uint32_t>(std::stoul(value_text, nullptr, 0));
+                    has_current = true;
+                } catch (...) {
+                    continue;
+                }
+            } else {
+                name = token;
+                if (!has_current) {
+                    current = 0;
+                    has_current = true;
+                } else {
+                    ++current;
+                }
+            }
+
+            if (current <= 0xFFFFu) {
+                result[static_cast<uint16_t>(current)] = lowercase_names ? ToLower(name) : name;
+            }
         }
     }
 
@@ -184,10 +187,17 @@ auto FormatInstruction(const xendiza::DecodedInstruction& di) -> std::string
     return oss.str();
 }
 
-void PrintDecoded(const size_t offset, const xendiza::DecodedInstruction& di)
+void PrintDecoded(const size_t offset, const uint8_t* bytes, const xendiza::DecodedInstruction& di)
 {
+    std::ostringstream hex_bytes;
+    for (uint8_t i = 0; i < di.length; ++i) {
+        if (i > 0) hex_bytes << ' ';
+        hex_bytes << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(bytes[i]);
+    }
+
     std::cout << "0x" << std::hex << std::setw(8) << std::setfill('0') << offset
-              << "  len=" << std::dec << static_cast<int>(di.length)
+              << "  " << std::left << std::setfill(' ') << std::setw(45) << hex_bytes.str()
+              << "  len=" << std::right << std::dec << static_cast<int>(di.length)
               << "  " << FormatInstruction(di) << "\n";
 }
 
@@ -212,7 +222,7 @@ void DecodeBuffer(const std::vector<uint8_t>& bytes, const std::string& mode_nam
             continue;
         }
 
-        PrintDecoded(offset, di);
+        PrintDecoded(offset, bytes.data() + offset, di);
         ++decoded_count;
         offset += di.length;
     }

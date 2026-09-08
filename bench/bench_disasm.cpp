@@ -1,4 +1,4 @@
-#include "../xendiza.hpp"
+#include <xendiza/xendiza.hpp>
 
 #include <algorithm>
 #include <array>
@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -25,6 +27,8 @@ namespace {
 struct Options {
     size_t corpus_bytes = 8 * 1024 * 1024;
     uint32_t iters = 40;
+    std::string file_path;                 // --file <path>: load a single raw-bytes file
+    std::vector<std::string> fixtures;     // --fixture <name>: load bench/fixtures/<name>.text.bin (repeatable)
 };
 
 struct Result {
@@ -35,6 +39,27 @@ struct Result {
     uint64_t errors = 0;
     uint64_t checksum = 0;
 };
+
+// Read an entire file as raw bytes. Mirrors example/example.cpp LoadFileBytes.
+auto LoadFileBytes(const std::string& path) -> std::vector<uint8_t>
+{
+    std::ifstream f(path, std::ios::binary);
+    if (!f) {
+        return {};
+    }
+    return std::vector<uint8_t>(std::istreambuf_iterator<char>(f),
+                                std::istreambuf_iterator<char>());
+}
+
+// Resolve a fixture name (e.g. "ntdll") to bench/fixtures/ntdll.text.bin,
+// relative to this source file's location so it works from any CWD.
+auto FixturePath(const std::string& name) -> std::string
+{
+    // __FILE__ is bench/bench_disasm.cpp; fixtures live in bench/fixtures/.
+    namespace fs = std::filesystem;
+    const fs::path here = fs::path(__FILE__).parent_path();
+    return (here / "fixtures" / (name + ".text.bin")).string();
+}
 
 auto ParseOptions(const int argc, char** argv) -> Options
 {
@@ -50,6 +75,10 @@ auto ParseOptions(const int argc, char** argv) -> Options
             if (iters > 0) {
                 opt.iters = iters;
             }
+        } else if (std::strcmp(argv[i], "--file") == 0 && i + 1 < argc) {
+            opt.file_path = argv[++i];
+        } else if (std::strcmp(argv[i], "--fixture") == 0 && i + 1 < argc) {
+            opt.fixtures.emplace_back(argv[++i]);
         }
     }
     return opt;
@@ -229,9 +258,39 @@ void PrintResult(const Result& r)
 int main(int argc, char** argv)
 {
     const auto opt = ParseOptions(argc, argv);
-    const auto corpus = BuildCorpus(opt.corpus_bytes);
 
-    std::cout << "Benchmark corpus: " << corpus.size() << " bytes, iterations: " << opt.iters << "\n";
+    // Corpus source priority: --file > --fixture (concatenated) > synthetic seed.
+    std::vector<uint8_t> corpus;
+    std::string corpus_desc;
+    if (!opt.file_path.empty()) {
+        corpus = LoadFileBytes(opt.file_path);
+        corpus_desc = "file:" + opt.file_path;
+        if (corpus.empty()) {
+            std::cerr << "error: could not read --file '" << opt.file_path << "'\n";
+            return 1;
+        }
+    } else if (!opt.fixtures.empty()) {
+        for (const auto& name : opt.fixtures) {
+            const auto path = FixturePath(name);
+            auto bytes = LoadFileBytes(path);
+            if (bytes.empty()) {
+                std::cerr << "error: could not read fixture '" << name
+                          << "' (" << path << ")\n";
+                return 1;
+            }
+            corpus.insert(corpus.end(), bytes.begin(), bytes.end());
+        }
+        corpus_desc = "fixtures:" ;
+        for (size_t i = 0; i < opt.fixtures.size(); ++i) {
+            corpus_desc += (i ? "+" : "") + opt.fixtures[i];
+        }
+    } else {
+        corpus = BuildCorpus(opt.corpus_bytes);
+        corpus_desc = "seed(tiled to " + std::to_string(opt.corpus_bytes) + " bytes)";
+    }
+
+    std::cout << "Benchmark corpus: " << corpus.size() << " bytes (" << corpus_desc
+              << "), iterations: " << opt.iters << "\n";
     std::cout << "Decoder        | Throughput |    Decode | Stats\n";
     std::cout << "---------------------------------------------------------------\n";
 
