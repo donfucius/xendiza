@@ -125,6 +125,7 @@ class X64Traits {
 
     static inline auto ProcessPrefix(gsl::span<const uint8_t> buffer) noexcept -> std::pair<PrefixInfo, ErrorCode>;
     static auto Decode2ByteOpcode(const PrefixInfo& prefix_info, gsl::span<const uint8_t> buffer) noexcept -> DecodedInstruction;
+    static auto DecodeInstruction(gsl::span<const uint8_t> buffer) noexcept -> DecodedInstruction;
 
 public:
 
