@@ -508,7 +508,7 @@ auto X64Traits::Decode2ByteOpcode(
         if ((modrm & 0b00'111'000) != 0b00'000'000) {
             return ERR_UNDEFINED_INSTRUCTION;
         }
-        uint8_t modrm_len = kLengthTable_ModRM[modrm];
+        auto modrm_len = kLengthTable_ModRM[modrm];
 
         // For mod=00,r/m=100, SIB is present. If SIB.base=101, disp32 is mandatory.
         if (ModrmHasSib(modrm)) {
@@ -1029,6 +1029,7 @@ inline auto X64Traits::ProcessPrefix(gsl::span<const uint8_t> buffer) noexcept -
             break;
 
         case Prefix::REPNE:
+            [[fallthrough]];
         case Prefix::REPE:
             info.has_prefix.has_rep = 1;
             info.rep_byte = byte;
