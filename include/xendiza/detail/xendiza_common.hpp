@@ -513,7 +513,7 @@ static constexpr auto GetInstructionDescriptor_opcode_extension_0x81(const uint8
     return { len, kInstrIdTable_opcode_extension_0x81[byte] };
 }
 
-static constexpr auto GetInstructionDescriptor_opcode_extension_0x82(const uint8_t byte) noexcept -> DecodedInstruction
+static constexpr auto GetInstructionDescriptor_opcode_extension_0x82([[maybe_unused]] const uint8_t byte) noexcept -> DecodedInstruction
 {
     // 0x82 is invalid in 64-bit mode - return error
     return { ERR(UNDEFINED_INSTRUCTION), {} };
