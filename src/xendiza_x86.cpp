@@ -214,7 +214,7 @@ constexpr auto DecodeOpcodeExtension(const uint8_t dispatch_code, const uint8_t 
     switch (dispatch_code) {
     case 0x80: return GetInstructionDescriptor_opcode_extension_0x80(modrm_byte);
     case 0x81: return GetInstructionDescriptor_opcode_extension_0x81(modrm_byte);
-    case 0x82: return GetInstructionDescriptor_opcode_extension_0x82();
+    case 0x82: return GetInstructionDescriptor_opcode_extension_0x82(modrm_byte);
     case 0x83: return GetInstructionDescriptor_opcode_extension_0x83(modrm_byte);
     case 0x8F: return GetInstructionDescriptor_opcode_extension_0x8F(modrm_byte);
     case 0xC0: return GetInstructionDescriptor_opcode_extension_0xC0(modrm_byte);
