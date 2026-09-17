@@ -376,16 +376,10 @@ auto X86Traits::ProcessPrefix(gsl::span<const uint8_t> buffer) noexcept -> std::
 
         switch (prefix_type) {
         case Prefix32::LOCK:
-            if (info.has_prefix.has_lock == 1) {
-                return { info, ErrorCode::UNDEFINED_INSTRUCTION };
-            }
             info.has_prefix.has_lock = 1;
             break;
         case Prefix32::REPNE:
         case Prefix32::REPE:
-            if (info.has_prefix.has_rep == 1) {
-                return { info, ErrorCode::UNDEFINED_INSTRUCTION };
-            }
             info.has_prefix.has_rep = 1;
             info.rep_byte = buffer[pos];
             break;
@@ -399,15 +393,9 @@ auto X86Traits::ProcessPrefix(gsl::span<const uint8_t> buffer) noexcept -> std::
             info.seg_byte = buffer[pos];
             break;
         case Prefix32::OPR_SIZE:
-            if (info.has_prefix.has_66 == 1) {
-                return { info, ErrorCode::UNDEFINED_INSTRUCTION };
-            }
             info.has_prefix.has_66 = 1;
             break;
         case Prefix32::ADDR_SIZE:
-            if (info.has_prefix.has_67 == 1) {
-                return { info, ErrorCode::UNDEFINED_INSTRUCTION };
-            }
             info.has_prefix.has_67 = 1;
             break;
         default:
@@ -934,7 +922,23 @@ auto X86Traits::Decode2ByteOpcode(const PrefixInfo32& prefix_info, gsl::span<con
     }
 }
 
+// Entry point: enforces the architectural 15-byte total-length limit on the
+// fully decoded instruction (prefixes + opcode + ModRM/disp/imm), mirroring
+// the #GP a CPU raises for over-long instructions. Error results
+// (length >= 0xE0) pass through unchanged.
 auto X86Traits::Disasm(gsl::span<const uint8_t> buffer) noexcept -> DecodedInstruction
+{
+    auto result = DecodeInstruction(buffer);
+    if (result.length >= 0xE0) {
+        return result;
+    }
+    if (result.length > MAX_INSTRUCTION_LENGTH) {
+        return ERR_UNDEFINED_INSTRUCTION;
+    }
+    return result;
+}
+
+auto X86Traits::DecodeInstruction(gsl::span<const uint8_t> buffer) noexcept -> DecodedInstruction
 {
     if (buffer.empty()) {
         return ERR_INSUFFICIENT_BUFFER;

@@ -508,7 +508,20 @@ auto X64Traits::Decode2ByteOpcode(
         if ((modrm & 0b00'111'000) != 0b00'000'000) {
             return ERR_UNDEFINED_INSTRUCTION;
         }
-        const uint8_t modrm_len = kLengthTable_ModRM[modrm];
+        uint8_t modrm_len = kLengthTable_ModRM[modrm];
+
+        // For mod=00,r/m=100, SIB is present. If SIB.base=101, disp32 is mandatory.
+        if (ModrmHasSib(modrm)) {
+            if (buffer.size() <= static_cast<size_t>(prefix_info.length + 3)) {
+                return ERR_INSUFFICIENT_BUFFER;
+            }
+            if (const auto sib = buffer[prefix_info.length + 3];
+                (modrm & 0b11'000'000u) == 0b00'000'000u
+                && (sib & 0b000'000'111u) == 0b000'000'101u) {
+                modrm_len = static_cast<uint8_t>(modrm_len + 4);
+            }
+        }
+
         const auto total_len = static_cast<uint8_t>(prefix_info.length + modrm_len + 1);
         return { total_len, instr_id };
     }
@@ -983,9 +996,7 @@ inline auto X64Traits::ProcessPrefix(gsl::span<const uint8_t> buffer) noexcept -
         }
 
         if (byte >= 0x40 && byte <= 0x4F) {
-            if (info.has_prefix.has_rex == 1) {
-                return { info, ErrorCode::UNDEFINED_INSTRUCTION };
-            }
+            // Repeated REX prefixes are accepted; the last one wins.
             info.has_prefix.has_rex = 1;
             info.rex_byte = byte;
             ++info.length;
@@ -1014,17 +1025,11 @@ inline auto X64Traits::ProcessPrefix(gsl::span<const uint8_t> buffer) noexcept -
             break;
 
         case Prefix::LOCK:
-            if (info.has_prefix.has_lock == 1) {
-                return { info, ErrorCode::UNDEFINED_INSTRUCTION };
-            }
             info.has_prefix.has_lock = 1;
             break;
 
         case Prefix::REPNE:
         case Prefix::REPE:
-            if (info.has_prefix.has_rep == 1) {
-                return { info, ErrorCode::UNDEFINED_INSTRUCTION };
-            }
             info.has_prefix.has_rep = 1;
             info.rep_byte = byte;
             break;
@@ -1040,16 +1045,10 @@ inline auto X64Traits::ProcessPrefix(gsl::span<const uint8_t> buffer) noexcept -
             break;
 
         case Prefix::OPR_SIZE:
-            if (info.has_prefix.has_66 == 1) {
-                return { info, ErrorCode::UNDEFINED_INSTRUCTION };
-            }
             info.has_prefix.has_66 = 1;
             break;
 
         case Prefix::ADDR_SIZE:
-            if (info.has_prefix.has_67 == 1) {
-                return { info, ErrorCode::UNDEFINED_INSTRUCTION };
-            }
             info.has_prefix.has_67 = 1;
             break;
 
@@ -1060,6 +1059,14 @@ inline auto X64Traits::ProcessPrefix(gsl::span<const uint8_t> buffer) noexcept -
 
         default:
             return { info, ErrorCode::UNDEFINED_INSTRUCTION };
+        }
+
+        // A REX prefix is only valid as the last prefix; any legacy prefix
+        // consumed after it invalidates it entirely (bits are dropped, the
+        // instruction still decodes) - same semantics as Zydis.
+        if (info.has_prefix.has_rex == 1) {
+            info.has_prefix.has_rex = 0;
+            info.rex_byte = 0;
         }
 
         ++info.length;
@@ -1073,7 +1080,23 @@ inline auto X64Traits::ProcessPrefix(gsl::span<const uint8_t> buffer) noexcept -
     return { info, ErrorCode::OK };
 }
 
+// Entry point: enforces the architectural 15-byte total-length limit on the
+// fully decoded instruction (prefixes + opcode + ModRM/disp/imm), mirroring
+// the #GP a CPU raises for over-long instructions. Error results
+// (length >= 0xE0) pass through unchanged.
 auto X64Traits::Disasm(gsl::span<const uint8_t> buffer) noexcept -> DecodedInstruction
+{
+    auto result = DecodeInstruction(buffer);
+    if (result.length >= 0xE0) {
+        return result;
+    }
+    if (result.length > MAX_INSTRUCTION_LENGTH) {
+        return ERR_UNDEFINED_INSTRUCTION;
+    }
+    return result;
+}
+
+auto X64Traits::DecodeInstruction(gsl::span<const uint8_t> buffer) noexcept -> DecodedInstruction
 {
     if (buffer.empty()) {
         return ERR_INSUFFICIENT_BUFFER;

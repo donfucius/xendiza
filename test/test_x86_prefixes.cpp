@@ -279,42 +279,66 @@ TEST(X86InvalidTest, LES_LDS_0xC4_0xC5_decode_as_invalid_short)
 }
 
 // =============================================================================
-// ProcessPrefix: duplicate-prefix detection (each returns UNDEFINED_INSTRUCTION).
-// LOCK / REPNE / REPE share detection for some, 66h and 67h separately.
+// ProcessPrefix: repeated legacy prefixes are accepted (same semantics as
+// Zydis) - the flag is set, redundant occurrences are harmless, and state
+// bytes (rep/seg) follow last-one-wins.
 // =============================================================================
 
-TEST(X86PrefixTest, Duplicate_LOCK_undefined)
+TEST(X86PrefixTest, Duplicate_LOCK_ignored)
 {
-    auto result = Disasm32(std::array<uint8_t, 3>{0xF0, 0xF0, 0x01}); // would be ADD m32,r32
-    EXPECT_EQ(result.instrId.opcode, OpcodeId::INVALID_OPCODE);
-    EXPECT_EQ(result.length, static_cast<uint8_t>(ErrorCode::UNDEFINED_INSTRUCTION));
+    auto result = Disasm32(std::array<uint8_t, 4>{0xF0, 0xF0, 0x01, 0x00}); // ADD m32,r32
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::ADD);
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::m32);
+    EXPECT_EQ(result.length, 4);
 }
 
-TEST(X86PrefixTest, Duplicate_REP_undefined)
+TEST(X86PrefixTest, Duplicate_REP_last_wins)
 {
-    // F2 then F3 (both hit has_rep) -> undefined
+    // F2 then F3: rep_byte ends as F3; 32-bit mode has no F3 90 -> PAUSE remap.
     auto result = Disasm32(std::array<uint8_t, 3>{0xF2, 0xF3, 0x90});
-    EXPECT_EQ(result.instrId.opcode, OpcodeId::INVALID_OPCODE);
-    EXPECT_EQ(result.length, static_cast<uint8_t>(ErrorCode::UNDEFINED_INSTRUCTION));
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::NOP);
+    EXPECT_EQ(result.length, 3);
 }
 
-TEST(X86PrefixTest, Duplicate_REPNE_same_byte_undefined)
+TEST(X86PrefixTest, Duplicate_REPNE_same_byte_ok)
 {
     auto result = Disasm32(std::array<uint8_t, 3>{0xF2, 0xF2, 0x90});
-    EXPECT_EQ(result.instrId.opcode, OpcodeId::INVALID_OPCODE);
-    EXPECT_EQ(result.length, static_cast<uint8_t>(ErrorCode::UNDEFINED_INSTRUCTION));
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::NOP);
+    EXPECT_EQ(result.length, 3);
 }
 
-TEST(X86PrefixTest, Duplicate_66h_undefined)
+TEST(X86PrefixTest, Duplicate_66h_ok)
 {
     auto result = Disasm32(std::array<uint8_t, 3>{0x66, 0x66, 0x90});
-    EXPECT_EQ(result.instrId.opcode, OpcodeId::INVALID_OPCODE);
-    EXPECT_EQ(result.length, static_cast<uint8_t>(ErrorCode::UNDEFINED_INSTRUCTION));
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::NOP);
+    EXPECT_EQ(result.length, 3);
 }
 
-TEST(X86PrefixTest, Duplicate_67h_undefined)
+TEST(X86PrefixTest, Duplicate_67h_ok)
 {
     auto result = Disasm32(std::array<uint8_t, 3>{0x67, 0x67, 0x90});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::NOP);
+    EXPECT_EQ(result.length, 3);
+}
+
+// =============================================================================
+// ProcessPrefix: 15-byte total instruction-length limit. A 7x-66h multi-prefix
+// nop is exactly 15 bytes (the architectural maximum); one more prefix byte
+// pushes the total to 16 and must be rejected.
+// =============================================================================
+
+TEST(X86PrefixTest, MultiPrefix_15ByteNop)
+{
+    auto result = Disasm32(std::array<uint8_t, 15>{0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+                                                   0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::NOP);
+    EXPECT_EQ(result.length, 15);
+}
+
+TEST(X86PrefixTest, Over15Byte_66x8_rejected)
+{
+    auto result = Disasm32(std::array<uint8_t, 16>{0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+                                                   0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00});
     EXPECT_EQ(result.instrId.opcode, OpcodeId::INVALID_OPCODE);
     EXPECT_EQ(result.length, static_cast<uint8_t>(ErrorCode::UNDEFINED_INSTRUCTION));
 }

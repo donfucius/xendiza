@@ -60,6 +60,7 @@ class X86Traits {
     static auto ProcessPrefix(gsl::span<const uint8_t> buffer) noexcept -> std::pair<PrefixInfo32, ErrorCode>;
     static auto Decode2ByteOpcode(const PrefixInfo32& prefix_info, gsl::span<const uint8_t> buffer) noexcept
         -> DecodedInstruction;
+    static auto DecodeInstruction(gsl::span<const uint8_t> buffer) noexcept -> DecodedInstruction;
 
 public:
     static auto Disasm(gsl::span<const uint8_t> buffer) noexcept -> DecodedInstruction;
