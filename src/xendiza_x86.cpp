@@ -66,6 +66,10 @@ constexpr auto kDecodeTable_1byte_opcode_32 = [] {
     table[0x4D] = DTE(0x01, IID(DEC, r32));
     table[0x4E] = DTE(0x01, IID(DEC, r32));
     table[0x4F] = DTE(0x01, IID(DEC, r32));
+    // AAM/AAD are valid in legacy x86-32 mode (invalid in 64-bit, where the
+    // shared-table INVALID entries stay in effect).
+    table[0xD4] = DTE(0xD4, IID(AAM, ax, imm8));
+    table[0xD5] = DTE(0xD5, IID(AAD, ax, imm8));
     return table;
 }();
 
@@ -1128,6 +1132,14 @@ auto X86Traits::DecodeInstruction(gsl::span<const uint8_t> buffer) noexcept -> D
 
     case 0xE2:
         return Decode2ByteOpcode(prefix_info, buffer);
+
+    case 0xD4:
+    case 0xD5:
+        // AAM/AAD imm8: truncated encodings must report INSUFFICIENT_BUFFER.
+        if (buffer.size() <= static_cast<size_t>(prefix_info.length + 1)) {
+            return ERR_INSUFFICIENT_BUFFER;
+        }
+        return { static_cast<uint8_t>(prefix_info.length + 2), instr_id };
 
     case 0x01:
     case 0x02:

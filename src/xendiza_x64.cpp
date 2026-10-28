@@ -132,7 +132,10 @@ constexpr auto ApplyPrefixSizes(
         return result;
     }
 
-    // Subtract 2 if 66h converts imm32 → imm16 (shrinks the encoding)
+    // Subtract 2 if 66h converts imm32 → imm16 (shrinks the encoding).
+    // Note: rel32 is NOT shrunk — in 64-bit mode Intel ignores the 66h prefix
+    // for near branches (rel32 stays rel32); the rel16 form only exists in
+    // 16/32-bit modes, handled by the x86 path.
     if (has_66) {
         for (uint8_t i = 0; i < result.instrId.operand_count; ++i) {
             if (result.instrId.operands.operand[i] == Operand::imm32) {
@@ -329,8 +332,8 @@ auto X64Traits::Decode2ByteOpcode(
             prefix_info.rep_byte == static_cast<uint8_t>(Prefix::REPE)) {
             return { static_cast<uint8_t>(prefix_info.length + tag.instr_len), IID(WBNOINVD) };
         }
-        const auto total_len = static_cast<uint8_t>(prefix_info.length + tag.instr_len);
-        return { total_len, instr_id };
+        const auto adjusted = ApplyPrefixSizes({ tag.instr_len, instr_id }, prefix_info);
+        return { static_cast<uint8_t>(prefix_info.length + adjusted.length), adjusted.instrId };
     }
 
     // Gv_Eb: dest r32 (modified by REX.W/66h), src fixed at byte (r8 or m8).
@@ -1328,8 +1331,8 @@ auto X64Traits::DecodeInstruction(gsl::span<const uint8_t> buffer) noexcept -> D
         if (opcode == 0x90 && prefix_info.rep_byte == static_cast<uint8_t>(Prefix::REPE)) {
             return { static_cast<uint8_t>(prefix_info.length + 1), IID(PAUSE) };
         }
-        const uint8_t total_len = prefix_info.length + tag.instr_len;
-        return { total_len, instr_id };
+        const auto adjusted = ApplyPrefixSizes({ tag.instr_len, instr_id }, prefix_info);
+        return { static_cast<uint8_t>(prefix_info.length + adjusted.length), adjusted.instrId };
     }
 
     default:

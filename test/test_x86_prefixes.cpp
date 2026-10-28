@@ -623,3 +623,74 @@ TEST(X86PrefixTest, Only_prefix_no_opcode_undefined)
     EXPECT_EQ(result.instrId.opcode, OpcodeId::INVALID_OPCODE);
     EXPECT_EQ(result.length, static_cast<uint8_t>(ErrorCode::UNDEFINED_INSTRUCTION));
 }
+
+// =============================================================================
+// AAM/AAD (0xD4/0xD5): valid in 32-bit mode (ax, imm8), invalid in 64-bit mode.
+// DAA/DAS/AAA/AAS remain intentionally unsupported per the existing scope
+// decision (see X86InvalidTest.BCD_adjusts_undefined above).
+// =============================================================================
+
+TEST(X86AamAadTest, AAM_0xD4_imm8)
+{
+    auto result = Disasm32(std::array<uint8_t, 2>{0xD4, 0x0A});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::AAM);
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::ax);
+    EXPECT_EQ(result.instrId.operands.operand[1], Operand::imm8);
+    EXPECT_EQ(result.length, 2);
+}
+
+TEST(X86AamAadTest, AAD_0xD5_imm8)
+{
+    auto result = Disasm32(std::array<uint8_t, 2>{0xD5, 0x0A});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::AAD);
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::ax);
+    EXPECT_EQ(result.instrId.operands.operand[1], Operand::imm8);
+    EXPECT_EQ(result.length, 2);
+}
+
+TEST(X86AamAadTest, AAM_truncated_reports_insufficient_buffer)
+{
+    auto result = Disasm32(std::array<uint8_t, 1>{0xD4});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::INVALID_OPCODE);
+    EXPECT_EQ(result.length, static_cast<uint8_t>(ErrorCode::INSUFFICIENT_BUFFER));
+}
+
+TEST(X86AamAadTest, AAM_AAD_undefined_in_64bit)
+{
+    // The shared table keeps 0xD4/0xD5 invalid for the 64-bit path.
+    const auto buf = std::array<uint8_t, 2>{0xD4, 0x0A};
+    auto result = xendiza::Disasm<64>(gsl::span<const uint8_t>(buf.data(), buf.size()));
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::INVALID_OPCODE);
+    EXPECT_EQ(result.length, static_cast<uint8_t>(ErrorCode::UNDEFINED_INSTRUCTION));
+}
+
+// =============================================================================
+// 0x66 operand-size override on near branches and the accumulator-immediate
+// family in 32-bit mode (rel16 / ax,imm16; contrast with x64 which ignores
+// 0x66 on near branches).
+// =============================================================================
+
+TEST(X86PrefixTest, CALL_0xE8_with_66h_rel16)
+{
+    auto result = Disasm32(std::array<uint8_t, 4>{0x66, 0xE8, 0x34, 0x12});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::CALL);
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::rel16);
+    EXPECT_EQ(result.length, 4);
+}
+
+TEST(X86PrefixTest, JZ_0F84_with_66h_rel16)
+{
+    auto result = Disasm32(std::array<uint8_t, 5>{0x66, 0x0F, 0x84, 0x34, 0x12});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::JZ);
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::rel16);
+    EXPECT_EQ(result.length, 5);
+}
+
+TEST(X86PrefixTest, ADD_0x05_with_66h_imm16)
+{
+    auto result = Disasm32(std::array<uint8_t, 4>{0x66, 0x05, 0x34, 0x12});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::ADD);
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::ax);
+    EXPECT_EQ(result.instrId.operands.operand[1], Operand::imm16);
+    EXPECT_EQ(result.length, 4);
+}

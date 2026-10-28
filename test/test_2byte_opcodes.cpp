@@ -1700,3 +1700,13 @@ TEST(TwoByteOpcodeTest, OpcodeExt_0FAE_valid_CLFLUSH_with_disp8)
     EXPECT_EQ(result.length, 4);
 }
 
+
+TEST(TwoByteOpcodeTest, JZ_0F84_with_66h_stays_rel32_in_x64)
+{
+    // 64-bit mode ignores 0x66 on near branches (Intel SDM / Zydis default):
+    // rel32 stays rel32, length = prefix + opcode + 4.
+    auto result = Disasm(std::array<uint8_t, 7>{0x66, 0x0F, 0x84, 0x78, 0x56, 0x34, 0x12});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::JZ);
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::rel32);
+    EXPECT_EQ(result.length, 7);
+}

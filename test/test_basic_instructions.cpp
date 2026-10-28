@@ -1232,3 +1232,54 @@ TEST(DisasmTest, REX_prefix_followed_by_invalid)
     auto result = Disasm(std::array<uint8_t, 2>{0x48, 0xD6});
     EXPECT_EQ(result.instrId.opcode, OpcodeId::INVALID_OPCODE);
 }
+
+// =============================================================================
+// 0x66 operand-size override on fixed-length accumulator-immediate family (x64)
+// =============================================================================
+
+TEST(DisasmTest, ADD_0x05_with_66h_shrinks_to_imm16)
+{
+    // 66 05 34 12: 0x66 shrinks the fixed imm32 encoding (Intel SDM).
+    auto result = Disasm(std::array<uint8_t, 4>{0x66, 0x05, 0x34, 0x12});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::ADD);
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::ax);
+    EXPECT_EQ(result.instrId.operands.operand[1], Operand::imm16);
+    EXPECT_EQ(result.length, 4);
+}
+
+TEST(DisasmTest, ADD_0x05_unprefixed_stays_imm32)
+{
+    // Regression: without 0x66 the unprefixed encoding is unchanged.
+    auto result = Disasm(std::array<uint8_t, 5>{0x05, 0x78, 0x56, 0x34, 0x12});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::ADD);
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::eax);
+    EXPECT_EQ(result.instrId.operands.operand[1], Operand::imm32);
+    EXPECT_EQ(result.length, 5);
+}
+
+TEST(DisasmTest, TEST_0xA9_with_66h_shrinks_to_imm16)
+{
+    auto result = Disasm(std::array<uint8_t, 4>{0x66, 0xA9, 0x34, 0x12});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::TEST);
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::ax);
+    EXPECT_EQ(result.instrId.operands.operand[1], Operand::imm16);
+    EXPECT_EQ(result.length, 4);
+}
+
+TEST(DisasmTest, PUSH_0x68_with_66h_shrinks_to_imm16)
+{
+    auto result = Disasm(std::array<uint8_t, 4>{0x66, 0x68, 0x34, 0x12});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::PUSH);
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::imm16);
+    EXPECT_EQ(result.length, 4);
+}
+
+TEST(DisasmTest, CALL_0xE8_with_66h_stays_rel32_in_x64)
+{
+    // Intel ignores the 0x66 operand-size override on near branches in 64-bit
+    // mode: rel32 stays rel32 and the length still counts the prefix byte.
+    auto result = Disasm(std::array<uint8_t, 6>{0x66, 0xE8, 0x78, 0x56, 0x34, 0x12});
+    EXPECT_EQ(result.instrId.opcode, OpcodeId::CALL);
+    EXPECT_EQ(result.instrId.operands.operand[0], Operand::rel32);
+    EXPECT_EQ(result.length, 6);
+}

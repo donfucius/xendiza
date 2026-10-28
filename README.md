@@ -136,7 +136,7 @@ All decoders completed with `decoded=86009850`, `errors=0` on this corpus.
 ### Shared (both 32-bit and 64-bit paths)
 
 - Primarily optimized for one-byte opcode map and common extension groups used in fast analysis paths.
-- Prefix-aware decode includes practical support for `REX.W` (x64 only) and `0x66` operand-size behavior across implemented paths.
+- Prefix-aware decode includes practical support for `REX.W` (x64 only) and `0x66` operand-size behavior across implemented paths. `0x66` shrinks the accumulator-immediate family (`05/0D/…/3D`, `A9`), `PUSH imm32` (`68`), and 32-bit near branches to their 16-bit forms; in 64-bit mode it is architecturally ignored on near branches (`E8`/`E9`/`0F 80–8F` keep `rel32`).
 - Global operand contract: decoding output stops at the operand-form layer for all implemented instruction families.
 - Operands are reported as abstract classes/types (for example: `r8/r16/r32/r64`, `m8/m16/m32/m64/m128`, `xmm`, `imm*`, `rel*`, and x87 forms such as `st0`/`sti`, `m32fp/m64fp/m80fp`) rather than concrete register-index or effective-address expansion.
 - Segment-prefixed memory operands are represented as composite operands (for example: `fs_m64`, `gs_m32`, `ds_moffs32`). The segment override is fused into the memory operand name rather than emitted as a standalone operand.

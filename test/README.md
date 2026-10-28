@@ -190,12 +190,14 @@ Test count evolves with coverage expansion; use `ctest -N` in your build directo
 - **0x40-0x4F = INC/DEC r32** (the single biggest 32-vs-64 divergence; in x64 these are REX prefixes). All 16 forms + `0x66` shrink to `r16`.
 - PUSH/POP r32 (`0x50-0x5F`), normalized from `r64`
 - No-operand instructions: `NOP`, `RET`, `CLC/STC/CLI/STI/CLD/STD/CMC/HLT`, `CWDE/CDQ`, `PUSHFQ/POPFQ`, `SAHF/LAHF`, `XLAT`, `INT3`, `IRETD` (32-bit form), `LEAVE`, `RETF`
-- Legacy opcodes the shared table marks invalid in 32-bit mode (asserting current behavior): `PUSHA/POPA`, `PUSH/POP ES`, `PUSH CS`, BCD-adjusts (`DAA/DAS/AAA/AAS`), `CALL far`, `JMP far`, `INTO`, `LES/LDS` (decode as length-1 INVALID)
+- Legacy opcodes the shared table marks invalid in 32-bit mode (asserting current behavior): `PUSHA/POPA`, `PUSH/POP ES`, `PUSH CS`, BCD-adjusts (`DAA/DAS/AAA/AAS`), `CALL far`, `JMP far`, `INTO`, `LES/LDS` (decode as length-1 INVALID). Note: `AAM`/`AAD` (`0xD4`/`0xD5`) used to fall in this set unintentionally; they are architecturally valid in 32-bit mode and are now decoded (see below).
 - Duplicate-prefix detection → `UNDEFINED_INSTRUCTION`: duplicate `LOCK`, `REP/REPNE`, `0x66`, `0x67`
 - Valid prefix combinations; segment prefixes are last-wins (no dedup)
 - **Segment-override composite memory operands across all 6 segments (ES/CS/SS/DS/FS/GS) × multiple widths** (`es_m8` … `gs_m64`), plus `moffs` composite forms (`fs_moffs32`, `gs_moffs8`, `cs_moffs32`), and the non-composited fall-through for `m32fp`/`m`/`m128`
 - `0x67` address-size override: `moffs32 → moffs16` (length = prefix + 3)
 - `0x66` operand-size override on `moffs` MOV and `PUSH imm32`
+- `0x66` on near branches (`E8`, `0F 84`) and the accumulator-immediate family (`05`): `rel16` / `ax, imm16` with shortened length (32-bit mode honors the prefix)
+- `AAM`/`AAD` (`0xD4`/`0xD5`): 32-bit decodes `ax, imm8` length 2, truncated buffer → `INSUFFICIENT_BUFFER`; 64-bit stays `UNDEFINED_INSTRUCTION`
 - All 16 `Jcc rel8` short forms
 
 ---
@@ -207,6 +209,11 @@ The 32-bit test suite surfaced the following decoder inconsistencies in `xendiza
 1. **`FF /2`,`/4`,`/6` and `8F /0` memory forms emitted `m64` instead of `m32`.** The shared helpers rewrite these to the long-mode-default `m64`. `NormalizeOperandSize32` downgrades the register form (`r64→r32`) but intentionally leaves fixed-width `m64` operands (e.g. `CMPXCHG8B`, `FILD`) alone, so the fix rewrites `m64→m32` in the `0xEE` handler scoped to opcodes `0xFF`/`0x8F`. (Tests: `Grp6_0xFF_CALL/PUSH_mem_form_m32`, `POP_0x8F_slash0_mem_form_m32`.)
 2. **`case 0xEE` (extension groups with immediates) did not verify the trailing immediate bytes were within the buffer** before returning success. Both `DecodeModrmWithImmediate` and the `0xEE` handler now validate the full encoding length against `buffer.size()` and return `INSUFFICIENT_BUFFER` for a truncated immediate. (Test: `BufferTooShort_missing_imm`.)
 3. **`case 0x87` (x87) did not verify the `disp32` for SIB base=5 was within the buffer** before returning success. The handler now checks the full length (including the mandatory disp32) before reporting success. (Test: `BufferTooShort_SIB_disp32`.)
+
+Differential testing against capstone/zydis vectors (`test/diff/`) surfaced two more, fixed in `fix-operand16-branches-and-aam-aad`:
+
+4. **The 64-bit fixed-length dispatch cases ignored the `0x66` operand-size override.** The one-byte (`case 0x01–0x05`, `case 0x09`) and two-byte (`case 0x01–0x09`) fixed-length returns in `xendiza_x64.cpp` now route through `ApplyPrefixSizes`, so `05/0D/…/3D`, `A9`, and `68` decode as `ax, imm16` / `imm16` with the shortened length under `0x66`. Note the initially-suspected "near branches ignore `0x66` in 64-bit" turned out to be correct Intel behavior — the prefix is architecturally ignored on `E8`/`E9`/`0F 80–8F` in 64-bit mode (Zydis default; capstone's `x86_jcc_mode.yaml` "DEFAULT" 64-bit vectors encode the AMD-style `rel16` behavior, which xendiza deliberately does not follow). (Tests: `ADD_0x05_with_66h_shrinks_to_imm16`, `TEST_0xA9_with_66h_shrinks_to_imm16`, `PUSH_0x68_with_66h_shrinks_to_imm16`, `CALL_0xE8_with_66h_stays_rel32_in_x64`, `JZ_0F84_with_66h_stays_rel32_in_x64`; 32-bit side: `CALL_0xE8_with_66h_rel16`, `JZ_0F84_with_66h_rel16`, `ADD_0x05_with_66h_imm16`.)
+5. **`AAM`/`AAD` (`0xD4`/`0xD5`) were rejected in 32-bit mode**, swept into the shared table's INVALID entries that only apply to 64-bit. The 32-bit table now patches them to `AAM`/`AAD ax, imm8` (length 2) with a truncated-buffer check (`INSUFFICIENT_BUFFER`); the shared table stays invalid so 64-bit keeps returning `UNDEFINED_INSTRUCTION`. (Tests: `X86AamAadTest.*`.)
 
 ---
 
