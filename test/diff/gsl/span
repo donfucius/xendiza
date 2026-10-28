@@ -1,0 +1,35 @@
+// Minimal gsl::span shim for the differential test harness only.
+// Implements just the (pointer, size) construction and size()/empty()/data()
+// surface that xendiza's public headers use. NOT a general GSL replacement.
+#ifndef GSL_SPAN_SHIM_HPP
+#define GSL_SPAN_SHIM_HPP
+
+#include <cstddef>
+#include <type_traits>
+
+namespace gsl {
+
+template <typename T>
+class span {
+public:
+    using element_type = T;
+    using pointer = T*;
+
+    constexpr span() noexcept : data_(nullptr), size_(0) {}
+    constexpr span(pointer data, std::size_t size) noexcept : data_(data), size_(size) {}
+    template <std::size_t N>
+    constexpr span(element_type (&arr)[N]) noexcept : data_(arr), size_(N) {}
+
+    constexpr auto size() const noexcept -> std::size_t { return size_; }
+    constexpr bool empty() const noexcept { return size_ == 0; }
+    constexpr auto data() const noexcept -> pointer { return data_; }
+    constexpr auto operator[](std::size_t i) const -> element_type& { return data_[i]; }
+
+private:
+    pointer data_;
+    std::size_t size_;
+};
+
+} // namespace gsl
+
+#endif // GSL_SPAN_SHIM_HPP

@@ -8,3 +8,8 @@ build*/
 AGENTS.md
 CLAUDE.md
 openwiki/
+openspec/
+
+# differential-test harness (test/diff): track sources + third_party vectors,
+# ignore generated artifacts
+test/diff/out/
