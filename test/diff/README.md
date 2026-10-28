@@ -45,10 +45,10 @@ cmd //c test/diff/build.bat         # build out/harness.exe (MSVC dev environmen
 python test/diff/compare.py         # run and report
 ```
 
-## Current results (2026-10-27, post fix-operand16-branches-and-aam-aad)
+## Current results (2026-10-28, post fix-operand16-branches-and-aam-aad + legacy-prefix fixes)
 
 - 425 streams / 773 expected instructions from 13 files.
-- Agreement: 88.3% of comparable instructions; Zydis vectors 53/56.
+- Agreement: 89.9% of comparable instructions; Zydis vectors 53/56.
 - Remaining deltas classify into:
   - **By design** (unit-tested in `test/`): legacy-invalid opcodes in 32-bit
     mode (POP/PUSH segreg, PUSHA/POPA, INTO), MOV CR/DR memory forms,
